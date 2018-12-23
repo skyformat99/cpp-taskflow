@@ -2,7 +2,7 @@
 // and compares the runtime between baseline (sequential), OpenMP, C++ thread,
 // and Taskflow implementations.
 
-#include "taskflow.hpp"
+#include <taskflow/taskflow.hpp>
 #include <random>
 #include <numeric>
 #include <fstream>
@@ -49,7 +49,7 @@ matrix_t operator * (const matrix_t& A, const matrix_t& B) {
   K = A[0].size();
   M = B[0].size();
 
-  printf("A[%lux%lu] * B[%lux%lu]\n", N, K, K, M);
+  printf("A[%zux%zu] * B[%zux%zu]\n", N, K, K, M);
   
   // Initialize the matrix
   matrix_t ret(N);
@@ -108,100 +108,16 @@ void baseline(const std::vector<size_t>& D) {
             << " ms\n";
 }
 
-// Procedure: openmp
-void openmp(const std::vector<size_t>& D) {
-  
-  std::cout << "========== OpenMP ==========\n";
-
-  auto tbeg = std::chrono::steady_clock::now();
-
-  std::cout << "Generating matrix As ...\n";
-  std::vector<matrix_t> As(D.size());
-  #pragma omp parallel for
-  for(int j=0; j<(int)D.size(); ++j) {
-    As[j] = random_matrix(D[j]);
-  }
-  
-  std::cout << "Generating matrix Bs ...\n";
-  std::vector<matrix_t> Bs(D.size());
-  #pragma omp parallel for
-  for(int j=0; j<(int)D.size(); ++j) {
-    Bs[j] = random_matrix(D[j]);
-  }
-  
-  std::cout << "Computing matrix product values Cs ...\n";
-  std::vector<matrix_t> Cs(D.size());
-  #pragma omp parallel for
-  for(int j=0; j<(int)D.size(); ++j) {
-    Cs[j] = As[j] * Bs[j];
-  }
-
-  auto tend = std::chrono::steady_clock::now();
-
-  std::cout << "OpenMP takes " 
-            << std::chrono::duration_cast<std::chrono::milliseconds>(tend-tbeg).count() 
-            << " ms\n";
-}
-
-// Procedure: cppthread
-void cppthread(const std::vector<size_t>& D) {
-  
-  std::cout << "========== CppThread ==========\n";
-
-  auto tbeg = std::chrono::steady_clock::now();
-
-  tf::Threadpool tpl(std::thread::hardware_concurrency());
-
-  std::cout << "Generating matrix As ...\n";
-  std::vector<matrix_t> As(D.size());
-  std::vector<std::future<void>> futures;
-
-  for(size_t j=0; j<D.size(); ++j) {
-    futures.push_back(tpl.async([&, j] () { As[j] = random_matrix(D[j]); }));
-  }
-  
-  std::cout << "Generating matrix Bs ...\n";
-  std::vector<matrix_t> Bs(D.size());
-  for(size_t j=0; j<D.size(); ++j) {
-    futures.push_back(tpl.async([&, j] () { Bs[j] = random_matrix(D[j]); }));
-  }
-
-  std::cout << "Synchronizing As and Bs ...\n";
-  for(auto& fu : futures) {
-    fu.get();
-  }
-  futures.clear();
-  
-  std::cout << "Computing matrix product values Cs ...\n";
-  std::vector<matrix_t> Cs(D.size());
-  for(size_t j=0; j<D.size(); ++j) {
-    futures.push_back(tpl.async([&, j] () { Cs[j] = As[j] * Bs[j]; }));
-  }
-  
-  std::cout << "Synchronizing Cs ...\n";
-  for(auto& fu : futures) {
-    fu.get();
-  }
-  
-  auto tend = std::chrono::steady_clock::now();
-
-  std::cout << "CppThread takes " 
-            << std::chrono::duration_cast<std::chrono::milliseconds>(tend-tbeg).count() 
-            << " ms\n";
-}
-
 // Procedure: taskflow
 void taskflow(const std::vector<size_t>& D) {
   
   auto tbeg = std::chrono::steady_clock::now();
 
-  using builder_t  = typename tf::Taskflow::Task;
-
   tf::Taskflow tf;
   
   std::cout << "Generating task As ...\n";
   std::vector<matrix_t> As(D.size());
-  std::vector<builder_t> TaskAs;
+  std::vector<tf::Task> TaskAs;
   for(size_t j=0; j<D.size(); ++j) {
     TaskAs.push_back(tf.silent_emplace([&, j] () { 
       As[j] = random_matrix(D[j]); 
@@ -210,7 +126,7 @@ void taskflow(const std::vector<size_t>& D) {
 
   std::cout << "Generating task Bs ...\n";
   std::vector<matrix_t> Bs(D.size());
-  std::vector<builder_t> TaskBs;
+  std::vector<tf::Task> TaskBs;
   for(size_t j=0; j<D.size(); ++j) {
     TaskBs.push_back(tf.silent_emplace([&, j] () {
       Bs[j] = random_matrix(D[j]);
@@ -219,7 +135,7 @@ void taskflow(const std::vector<size_t>& D) {
 
   std::cout << "Generating task Cs ...\n";
   std::vector<matrix_t> Cs(D.size());
-  std::vector<builder_t> TaskCs;
+  std::vector<tf::Task> TaskCs;
   for(size_t j=0; j<D.size(); ++j) {
     TaskCs.push_back(tf.silent_emplace([&, j] () {
       Cs[j] = As[j] * Bs[j];
@@ -269,17 +185,11 @@ int main(int argc, char* argv[]) {
   if(std::string_view method(argv[1]); method == "baseline") {
     baseline(dimensions);
   }
-  else if(method == "openmp") {
-    openmp(dimensions);
-  }
-  else if(method == "cppthread") {
-    cppthread(dimensions);
-  }
   else if(method == "taskflow") {
     taskflow(dimensions);
   }
   else {
-    std::cerr << "wrong method, shoud be [baseline|openmp|cppthread|taskflow]\n";
+    std::cerr << "wrong method, shoud be [baseline|taskflow]\n";
   }
 
   return 0;
